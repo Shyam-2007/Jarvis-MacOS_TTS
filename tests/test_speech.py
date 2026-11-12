@@ -1188,6 +1188,39 @@ def test_mp3_seconds_reads_the_frame_header_and_nothing_else():
     assert speech.ack_floor_seconds(_mp3(100.0)) == speech.ACK_FLOOR_MAX_SEC
 
 
+def _wav(seconds: float, rate: int = 22050, junk: bool = True) -> bytes:
+    """A 16-bit mono PCM WAV of the given length, laid out as `say` writes
+    it: a JUNK chunk ahead of `fmt `, so a parser that assumes fixed
+    offsets gets it wrong."""
+    data = bytes(int(seconds * rate) * 2)
+    fmt = (1).to_bytes(2, "little") + (1).to_bytes(2, "little") + rate.to_bytes(4, "little") \
+        + (rate * 2).to_bytes(4, "little") + (2).to_bytes(2, "little") + (16).to_bytes(2, "little")
+    body = b"WAVE"
+    if junk:
+        body += b"JUNK" + (28).to_bytes(4, "little") + bytes(28)
+    body += b"fmt " + len(fmt).to_bytes(4, "little") + fmt
+    body += b"data" + len(data).to_bytes(4, "little") + data
+    return b"RIFF" + len(body).to_bytes(4, "little") + body
+
+
+def test_wav_seconds_walks_the_chunks():
+    import speech
+    assert abs(speech.wav_seconds(_wav(2.0)) - 2.0) < 0.001
+    assert abs(speech.wav_seconds(_wav(0.5, junk=False)) - 0.5) < 0.001
+    assert abs(speech.wav_seconds(_wav(1.0, rate=44100)) - 1.0) < 0.001
+    assert speech.wav_seconds(b"A:Alpha one.") == 0.0, "a fake has no floor"
+    assert speech.wav_seconds(b"") == 0.0 and speech.wav_seconds(None) == 0.0
+    assert speech.wav_seconds(b"RIFF\x00\x00\x00\x00WAVE") == 0.0, "no chunks"
+    assert speech.wav_seconds(_mp3(1.0)) == 0.0
+
+
+def test_the_ack_floor_reads_either_engines_audio():
+    import speech
+    assert abs(speech.ack_floor_seconds(_wav(2.0)) - 2.0 * speech.ACK_FLOOR_FACTOR) < 0.001
+    assert abs(speech.ack_floor_seconds(_mp3(2.0)) - 2.0 * speech.ACK_FLOOR_FACTOR) < 0.01
+    assert speech.ack_floor_seconds(_wav(100.0)) == speech.ACK_FLOOR_MAX_SEC
+
+
 @pytest.mark.asyncio
 async def test_the_watermark_cannot_be_walked_faster_than_the_audio_plays(h):
     s = h.sched

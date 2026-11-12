@@ -92,14 +92,24 @@ does not follow the app there. Move it to `/Applications` and relaunch.
 error `-1728` / "not allowed assistive access") without ever triggering the
 permission prompt itself, and its remedy text carries this same guidance.
 
-## `FISH_API_KEY` is genuinely required — there is no fallback voice
+## His voice is the Mac's own unless you ask for Fish
 
-`tts.py` calls the Fish Audio API directly; if the key is missing or empty,
-`synthesize_chunk` simply returns `None` — no error, no local TTS, no
-built-in voice of any kind. Without a real key from
-[fish.audio](https://fish.audio/), JARVIS has no voice at all, which reads
-to a new user as "it's just broken." This is the one piece of setup that
-cannot be skipped or worked around.
+`JARVIS_TTS_ENGINE` picks the voice at boot: `macos` (the default, also
+what any unknown value means) runs `say` once per sentence into a WAV;
+`fish` calls Fish Audio and needs `FISH_API_KEY`. Either way the browser
+plays the clip, so the orb, barge-in and echo rejection behave the same.
+
+- **A misspelt `JARVIS_VOICE` does not fail.** `say -v Nonesuch` speaks in
+  the system voice instead, so the only symptom is "why does he sound like
+  that?". `preflight.py`'s `macos_voice` check catches it at boot. List the
+  real names with `say -v ?`; names may contain spaces and parentheses
+  (`Eddy (English (UK))`) and go into `.env` unquoted.
+- **With `fish` and no key**, `synthesize_chunk` returns `None` with no
+  error and JARVIS goes silent, his replies appearing as text instead.
+  `preflight.py`'s `fish_api_key` check names it, but only when Fish is the
+  engine.
+- **Settings changes need a restart.** Engine, voice and rate are read once
+  at import; the settings panel saves them to `.env` and says so.
 
 ## Connecting a service: one file, and it is not the one you'd guess
 

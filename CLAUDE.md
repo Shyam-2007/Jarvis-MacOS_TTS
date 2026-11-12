@@ -14,8 +14,9 @@ When a user clones this repo and starts Claude Code, help them:
 2. Install Claude Code (`npm install -g @anthropic-ai/claude-code`, 2.1.224 or
    newer) and log in with `claude` — JARVIS's brain runs on your Claude
    subscription, not on an API key
-3. Get a Fish Audio API key from fish.audio (required — there is no fallback
-   voice)
+3. Pick a voice (optional): JARVIS speaks with the built-in macOS voice by
+   default, no key needed. Set `JARVIS_VOICE` to a name from `say -v ?`, or
+   `JARVIS_TTS_ENGINE=fish` plus a Fish Audio key for Fish's voice
 4. Install Python dependencies: pip install -r requirements.txt
 5. Install the Playwright browser: python -m playwright install chromium
    (`read_page` / `look_at_page` need it)
@@ -42,7 +43,9 @@ this presents as "the UI is up but nothing works" rather than as an error.
 - **Communication**: WebSocket (JSON messages + binary audio)
 - **AI**: a long-lived Claude Code process (`brain.py`, Sonnet by default) on
   the user's subscription; no Anthropic API calls on the voice path
-- **TTS**: Fish Audio with JARVIS voice model
+- **TTS**: the macOS speech synthesizer (`say`, default) or Fish Audio,
+  chosen by `JARVIS_TTS_ENGINE`. Either way one audio file per sentence,
+  played by the browser (WAV or MP3; `speech.audio_seconds` reads both)
 - **System**: AppleScript for Terminal and Chrome integration
 - **Runs**: every Claude Code execution goes through one recorded pipeline —
   `run_store.py` (SQLite) + `run_executor.py`, surfaced at `/api/runs`,
@@ -88,7 +91,9 @@ arbitrary LLM and file content, so everything goes through
   forwards `tools/call` to `POST /internal/tool`
 - `speech.py` — Sentence splitting and the scheduler that owns every
   utterance JARVIS speaks
-- `tts.py` — Fish Audio synthesis, one request per sentence chunk
+- `tts.py` — Speech synthesis, one clip per sentence chunk: `synthesize_macos`
+  (`say`, through the `_spawn_say` seam tests fake) and `synthesize_chunk`
+  (Fish Audio)
 - `frontend/src/orb.ts` — Three.js particle orb visualization
 - `frontend/src/voice.ts` — Web Speech API + audio playback
 - `frontend/src/main.ts` — Frontend state machine
@@ -115,7 +120,8 @@ arbitrary LLM and file content, so everything goes through
 - `usage_store.py` — Tracks the subscription's five-hour / seven-day
   rate-limit usage (there is no spend to report — see brain.py)
 - `preflight.py` — First-run environment checks: `claude` CLI/login,
-  Accessibility, Fish key, cross-session steering
+  Accessibility, the voice (macOS voice installed / Fish key), cross-session
+  steering
 - `claude_env.py` — The environment every spawned Claude Code child gets,
   including the `ANTHROPIC_*` scrub
 - `actions.py` — System actions (Terminal, Chrome) via AppleScript
@@ -160,8 +166,13 @@ JARVIS builds**. It is only this repository's own copies that are gone.
   never spawns it (every test sets this)
 - `JARVIS_MUTE_MIC_DURING_SPEECH` (optional, default false) — fallback if echo
   rejection is not enough with a given microphone
-- `FISH_API_KEY` (required) — Fish Audio TTS
-- `FISH_VOICE_ID` (optional) — Voice model ID
+- `JARVIS_TTS_ENGINE` (optional, default `macos`) — `macos` or `fish`; any
+  other value is treated as `macos`
+- `JARVIS_VOICE` (optional) — a macOS voice name from `say -v ?`; unset is
+  the system voice. A wrong name is not an error to `say`, so preflight checks it
+- `JARVIS_VOICE_RATE` (optional) — macOS speaking rate, words per minute
+- `FISH_API_KEY` (required only with `JARVIS_TTS_ENGINE=fish`) — Fish Audio TTS
+- `FISH_VOICE_ID` (optional, Fish only) — Voice model ID
 - `USER_NAME` (optional) — Your name for JARVIS to use
 - `JARVIS_DATA_DIR` (optional) — Where JARVIS writes everything: the SQLite
   database, memory Markdown, usage.json, the tool token. Defaults to `data/`
@@ -200,7 +211,8 @@ the file) because it drives `browser.py`, which launches Chromium with
 `pytest -m browser`; they skip themselves if there is no network.
 
 Everything else uses fakes at the subprocess seam — `screencapture`, `sips`,
-`osascript` and `claude` are never really invoked. If you add a test that
+`osascript`, `say` and `claude` are never really invoked (`say` is blocked
+suite-wide in `tests/conftest.py`). If you add a test that
 needs the network, a real window, or a real `claude`, mark it.
 
 ## Conventions

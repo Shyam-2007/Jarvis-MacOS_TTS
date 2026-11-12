@@ -44,6 +44,27 @@ def _never_touch_the_real_projects_folder(monkeypatch, tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def _never_run_the_real_say(monkeypatch, request):
+    """No test may run the real macOS `say`.
+
+    The macOS voice is the default engine, so anything that reaches
+    `server._synth_for_speech` unpatched would otherwise spawn it. Refused
+    as an OSError, which `tts` turns into "no audio" (a `None` chunk, an
+    empty voice list): the same outcome an unset Fish key gave before the
+    macOS engine existed. test_tts.py is exempt: it fakes `_spawn_say`
+    itself to test the engine.
+    """
+    if request.module.__name__.endswith("test_tts"):
+        return
+    import tts
+
+    async def _blocked(*args, **kwargs):
+        raise OSError("a test tried to run the real `say`; fake tts._spawn_say")
+
+    monkeypatch.setattr(tts, "_spawn_say", _blocked)
+
+
+@pytest.fixture(autouse=True)
 def _never_write_to_the_live_dotenv(monkeypatch, tmp_path):
     """No test may write into the developer's live `.env`.
 

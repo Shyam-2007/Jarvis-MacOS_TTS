@@ -5,7 +5,8 @@ Every one of these has already bitten this project: `claude` missing or too
 old, not logged in (the voice brain runs on the user's *subscription*, never
 an API key -- see brain.py's SCRUBBED_ENV_PREFIXES), `crossSessionInbound`
 not accepting steers into other sessions, `osascript` lacking Accessibility
-so `answer_dialog`'s keystroke fails, and no Fish Audio key at all.
+so `answer_dialog`'s keystroke fails, no Fish Audio key when Fish is the
+voice, and a macOS voice name that is not installed.
 
 This module only *observes*. Nothing here writes a file, changes a setting,
 or grants a permission -- see `_check_cross_session_inbound_sync`'s
@@ -39,6 +40,7 @@ from typing import Optional
 
 import claude_env
 import screen
+import tts
 
 log = logging.getLogger("jarvis.preflight")
 
@@ -440,7 +442,11 @@ def _check_screen_recording_sync() -> Check:
 
 
 def _check_fish_api_key_sync() -> Check:
-    """FISH_API_KEY must be set or JARVIS has no voice."""
+    """FISH_API_KEY must be set when Fish is the voice, or JARVIS has none.
+    With the macOS voice (the default) no key is needed at all."""
+    if tts.engine_from_env() != tts.ENGINE_FISH:
+        return Check(name="fish_api_key", status=STATUS_OK,
+                     message="Using the macOS voice; no Fish Audio key needed.")
     if os.environ.get("FISH_API_KEY"):
         return Check(name="fish_api_key", status=STATUS_OK, message="FISH_API_KEY is set.")
     return Check(
@@ -448,6 +454,38 @@ def _check_fish_api_key_sync() -> Check:
         status=STATUS_FAIL,
         message="FISH_API_KEY is not set.",
         remedy="Get a Fish Audio API key from fish.audio and set FISH_API_KEY in .env.",
+    )
+
+
+async def _check_macos_voice(timeout: float = DEFAULT_CHECK_TIMEOUT) -> Check:
+    """With the macOS voice: `say` must exist, and a JARVIS_VOICE that names a
+    voice must name an INSTALLED one. `say -v Nonesuch` does not fail — it
+    speaks in the system voice instead — so a typo would otherwise surface
+    only as "why does he sound like that?"."""
+    name = "macos_voice"
+    if tts.engine_from_env() != tts.ENGINE_MACOS:
+        return Check(name=name, status=STATUS_OK, message="Not using the macOS voice.")
+    if shutil.which(tts.SAY_BIN) is None:
+        return Check(
+            name=name, status=STATUS_FAIL,
+            message="The macOS `say` command is not available.",
+            remedy="The built-in voice needs macOS. Elsewhere, set JARVIS_TTS_ENGINE=fish and FISH_API_KEY in .env.",
+        )
+    wanted = os.environ.get("JARVIS_VOICE", "").strip()
+    if not wanted:
+        return Check(name=name, status=STATUS_OK, message="Using the macOS system voice.")
+    rc, stdout, stderr = await _run_subprocess(tts.SAY_BIN, "-v", "?", timeout=timeout)
+    if rc != 0:
+        return Check(name=name, status=STATUS_WARN,
+                     message=f"Could not list macOS voices: {(stderr or stdout).strip()[:200]}")
+    installed = {v["name"].casefold() for v in tts.parse_voice_list(stdout)}
+    if wanted.casefold() in installed:
+        return Check(name=name, status=STATUS_OK, message=f"Using the macOS voice {wanted!r}.")
+    return Check(
+        name=name, status=STATUS_FAIL,
+        message=f"JARVIS_VOICE={wanted!r} is not an installed macOS voice.",
+        remedy=("Run `say -v ?` for the installed names, or download more in System Settings "
+                "→ Accessibility → Spoken Content → System Voice → Manage Voices."),
     )
 
 
@@ -626,7 +664,7 @@ def enable_cross_session_inbound() -> tuple[bool, str]:
 
 # ── running them all ─────────────────────────────────────────────────────
 
-_ASYNC_CHECKS = (_check_claude_cli, _check_claude_login, _check_accessibility)
+_ASYNC_CHECKS = (_check_claude_cli, _check_claude_login, _check_accessibility, _check_macos_voice)
 _SYNC_CHECKS = (_check_fish_api_key_sync, _check_anthropic_key_leftover_sync,
                 _check_cross_session_inbound_sync, _check_screen_recording_sync)
 
@@ -695,6 +733,12 @@ def _phrase_for(check: Check) -> str:
         return "Screen Recording couldn't be checked"
     if name == "fish_api_key":
         return "I have no Fish Audio key"
+    if name == "macos_voice":
+        if "not available" in msg:
+            return "this machine has no macOS voice for me"
+        if "not an installed" in msg:
+            return "the voice I've been given isn't installed"
+        return "my voice couldn't be checked"
     if name == "anthropic_key_leftover":
         return "there's a leftover Anthropic API key in the environment"
     if name == "cross_session_inbound":

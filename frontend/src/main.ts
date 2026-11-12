@@ -9,6 +9,7 @@ import { createOrb, type OrbState } from "./orb";
 import { createVoiceInput, createAudioPlayer, createMicMonitor } from "./voice";
 import { createSocket } from "./ws";
 import { openSettings, checkFirstTimeSetup } from "./settings";
+import { createCaptions } from "./captions";
 import "./style.css";
 
 // ---------------------------------------------------------------------------
@@ -21,6 +22,8 @@ let isMuted = false;
 
 const statusEl = document.getElementById("status-text")!;
 const errorEl = document.getElementById("error-text")!;
+const captions = createCaptions();
+document.body.dataset.state = currentState;
 
 function showError(msg: string) {
   errorEl.textContent = msg;
@@ -60,6 +63,9 @@ let muteMicDuringSpeech = false;
 function transition(newState: State) {
   if (newState === currentState) return;
   currentState = newState;
+  document.body.dataset.state = newState;   // tints the status line (style.css)
+  if (newState === "thinking") captions.turnStarted();
+  captions.setBusy(newState === "thinking" || newState === "speaking");
   const btn = document.getElementById("hush");
   if (btn) (btn as HTMLButtonElement).hidden = newState !== "speaking";
   orb.setState(newState as OrbState);
@@ -81,10 +87,12 @@ const voiceInput = createVoiceInput(
   (text: string) => {
     // The server decides whether this is echo, a barge-in, or a new turn.
     micMonitor.sawSpeech();
+    captions.heard(text);
     socket.send({ type: "transcript", text, isFinal: true });
   },
   (text: string) => {
     micMonitor.sawSpeech();
+    captions.interim(text, currentState === "listening");
     socket.send({ type: "interim", text });
   },
   (msg: string) => {
@@ -129,6 +137,7 @@ const micMonitor = createMicMonitor(
 const hushBtn = document.createElement("button");
 hushBtn.id = "hush";
 hushBtn.type = "button";
+hushBtn.className = "hud-frame";
 hushBtn.textContent = "Stop";
 hushBtn.title = "Stop speaking (Esc)";
 hushBtn.hidden = true;
@@ -174,7 +183,10 @@ socket.onMessage((msg) => {
       if (currentState !== "speaking") transition("speaking");
       audioPlayer.enqueue(data, Number(msg.utt), Number(msg.idx));
     }
-    if (msg.text) console.log("[JARVIS]", msg.text);
+    if (msg.text) {
+      console.log("[JARVIS]", msg.text);
+      captions.spoke(String(msg.text), Number(msg.utt));
+    }
   } else if (type === "stop") {
     audioPlayer.stop();
     transition(isMuted ? "idle" : "listening");
@@ -189,7 +201,7 @@ socket.onMessage((msg) => {
   } else if (type === "text") {
     // A chunk TTS could not voice: show it instead of losing it
     console.log("[JARVIS]", msg.text);
-    statusEl.textContent = String(msg.text);
+    captions.spoke(String(msg.text));   // shown instead of lost
   } else if (type === "notice") {
     // Shown, never spoken. The server sends one when it is about to be busy
     // for a few seconds (a context rotation), and an empty string to clear it.

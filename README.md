@@ -76,11 +76,12 @@ limit.](docs/images/dashboard-usage.png)
 *So the number that matters is not a dollar figure — it is how much of your
 subscription's two windows is gone. Fictional sample data.*
 
-**The one thing you pay for is [Fish Audio](https://fish.audio/)**, which
-gives JARVIS his voice. Be aware there is no fallback: `tts.py` returns
-nothing without `FISH_API_KEY`, so JARVIS goes silent and his replies appear
-as text in the browser instead. If you would rather use a different TTS, that
-is a small, well-isolated file to replace — see *Make it yours* below.
+**His voice costs nothing by default.** JARVIS speaks with the Mac's own
+built-in voice (`say`): no key, no network. Pick any installed voice with
+`JARVIS_VOICE` (Daniel is the British one), or download better ones in System
+Settings → Accessibility → Spoken Content. If you want the film's voice
+instead, [Fish Audio](https://fish.audio/) is still supported:
+`JARVIS_TTS_ENGINE=fish` plus a `FISH_API_KEY`.
 
 ## What he does
 
@@ -148,7 +149,8 @@ stuck is the CLI's own words, not a guess. Fictional sample data.*
   @anthropic-ai/claude-code` (2.1.224 or newer), then run `claude` once and
   log in. This is what JARVIS runs on.
 - **Python 3.11+** and **Node.js 18+**.
-- **A Fish Audio API key.** Required; there is no fallback voice.
+- **Optionally, a Fish Audio API key**, only if you want Fish's voice
+  instead of the built-in macOS one.
 
 ## Setup
 
@@ -164,14 +166,16 @@ python -m playwright install chromium    # for read_page / look_at_page
 cd frontend && npm install && cd ..
 ```
 
-**Fill in the `.env`.** `.env.example` documents the lot; the short version is
-one required key and three optional ones:
+**Fill in the `.env`.** `.env.example` documents the lot; nothing in it is
+required. The short version:
 
 ```env
-FISH_API_KEY=...            # required, no fallback
-# JARVIS_BRAIN_MODEL=sonnet # optional: the brain's model
-# FISH_VOICE_ID=...         # optional: a different voice
-# USER_NAME=Tony            # optional: what he calls you
+# JARVIS_VOICE=Daniel          # optional: a macOS voice from `say -v ?`
+# JARVIS_VOICE_RATE=185        # optional: words per minute
+# JARVIS_TTS_ENGINE=fish       # optional: use Fish Audio instead...
+# FISH_API_KEY=...             # ...which then needs this
+# JARVIS_BRAIN_MODEL=sonnet    # optional: the brain's model
+# USER_NAME=Tony               # optional: what he calls you
 ```
 
 **Generate the certificates.** These are not optional:
@@ -277,7 +281,7 @@ Microphone → Chrome Web Speech API → WebSocket → FastAPI (server.py)
                                                       │
                     ┌─────────────────────────────────┼──────────────────────────────┐
                     ▼                                 ▼                              ▼
-        speech.py → Fish Audio → speaker    MCP tools (jarvis_mcp.py       session_watch.py
+        speech.py → tts.py → speaker        MCP tools (jarvis_mcp.py       session_watch.py
                                              → POST /internal/tool)     (every Claude Code
                                                       │                  session on the machine)
                                                       ▼
@@ -317,7 +321,7 @@ invariants hold throughout it:
 | Frontend | Vite + TypeScript + Three.js (voice UI), vanilla TS (dashboard) |
 | Communication | WebSocket — JSON messages, base64 MP3 audio |
 | Brain | One long-lived `claude -p` process, Sonnet by default, on your subscription |
-| Voice | Fish Audio, one request per sentence |
+| Voice | macOS `say` (default) or Fish Audio, one clip per sentence |
 | System | AppleScript — Terminal, Chrome, notifications, screenshots |
 | Storage | SQLite for runs and usage; plain Markdown for memory |
 
@@ -330,7 +334,7 @@ invariants hold throughout it:
 | `claude_env.py` | The environment every spawned child gets, including the `ANTHROPIC_*` scrub |
 | `jarvis_mcp.py` | Stdio MCP server exposing JARVIS's tools to the brain |
 | `speech.py` | Sentence splitting, echo rejection, barge-in, and the queue of everything JARVIS says |
-| `tts.py` | Fish Audio synthesis — the whole voice, in one small file |
+| `tts.py` | Speech synthesis — the macOS voice and Fish Audio, in one small file |
 | `builds.py` | Spec, brief and plan: the pipeline behind a real multi-hour build |
 | `specs.py` | The review surface — reading a design back by numbered section, and approving it |
 | `run_store.py` | SQLite `runs` / `run_events`, and the six-value status enum |
@@ -341,7 +345,7 @@ invariants hold throughout it:
 | `dialog.py` | Presses one key in the Terminal tab that owns a session |
 | `jarvis_memory.py` | Memory as a folder of Markdown files, not a database |
 | `jarvis_home/CLAUDE.md` | JARVIS's persona and rules — the file to edit to change who he is |
-| `preflight.py` | First-run checks: CLI version, login, Accessibility, Fish key |
+| `preflight.py` | First-run checks: CLI version, login, Accessibility, voice |
 | `data_paths.py` | The single source of truth for where JARVIS writes |
 | `frontend/src/voice.ts` | Web Speech API, audio playback |
 | `frontend/src/orb.ts` | The Three.js particle orb |
@@ -416,8 +420,9 @@ it and bend it to what you do. The seams are deliberately obvious:
   data directory on first run; edit that copy and it is never overwritten, or
   edit the template and it ships to a fresh install. If you want something
   other than a British butler, this is the only file you need to touch.
-- **His voice** is `tts.py`: one HTTP call, sixty-odd lines. Swap in a
-  different provider, or a local model, without touching anything else.
+- **His voice** is `tts.py`: each engine is one function that turns a
+  sentence into one audio file the browser can decode. Add a provider, or a
+  local model, beside the two there, and select it in `server._synth_for_speech`.
 - **His tools** are the `TOOL_HANDLERS` table in `server.py`, exposed to the
   brain through `jarvis_mcp.py` and gated by an allowlist in `brain.py`.
   Adding one means writing a handler and naming it in those two places.
@@ -467,8 +472,8 @@ visit [ethanplus.ai](https://ethanplus.ai) for inquiries. See
 ## Credits
 
 Built by [Ethan](https://ethanplus.ai). Runs on
-[Claude Code](https://claude.com/claude-code) and
-[Fish Audio](https://fish.audio).
+[Claude Code](https://claude.com/claude-code), with the macOS speech
+synthesizer or [Fish Audio](https://fish.audio) as his voice.
 
 Inspired by the AI that started it all — Tony Stark's JARVIS.
 

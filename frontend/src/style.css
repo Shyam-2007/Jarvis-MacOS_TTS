@@ -1,3 +1,16 @@
+/* ===========================================================================
+   JARVIS — THE ORB PAGE
+   ---------------------------------------------------------------------------
+   Built on the dashboard's tokens so the two pages read as one machine. No
+   raw hue lives in this file except where a token is turned into a state
+   tone; a new colour goes in dashboard/theme/tokens.css first.
+
+   Only tokens.css is imported. shell.css and primitives.css style bare
+   elements (`body`, `button`) for a scrolling document, which this page is
+   not.
+   =========================================================================== */
+@import "./dashboard/theme/tokens.css";
+
 * {
   margin: 0;
   padding: 0;
@@ -8,31 +21,104 @@ html, body {
   width: 100%;
   height: 100%;
   overflow: hidden;
-  background: #050508;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: var(--ground);
+  color: var(--text);
+  font-family: var(--font-ui);
+  -webkit-font-smoothing: antialiased;
 }
+
+/* The state tone: follows the orb's colour per state (orb.ts), so the words
+   under the orb are lit by the same light. Set by main.ts on <body>. */
+body                         { --state-tone: var(--accent); }
+body[data-state="thinking"]  { --state-tone: var(--accent-bright); }
+body[data-state="compacting"]{ --state-tone: var(--signal-idle); }
+body[data-state="idle"]      { --state-tone: var(--text-faint); }
 
 #orb-canvas {
   position: fixed;
-  top: 0;
-  left: 0;
+  inset: 0;
   width: 100%;
   height: 100%;
 }
 
+/* Projection texture, lifted from the dashboard shell: a cool wash, a grid so
+   faint it only reads as depth, a vignette, and static scan lines. Sits over
+   the canvas and takes no input. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse at center, transparent 45%, rgba(0, 0, 0, 0.55) 100%),
+    radial-gradient(120% 90% at 12% -10%, rgba(217, 119, 87, 0.08), transparent 60%),
+    repeating-linear-gradient(0deg, rgba(232, 170, 145, 0.018) 0 1px, transparent 1px 44px),
+    repeating-linear-gradient(90deg, rgba(232, 170, 145, 0.018) 0 1px, transparent 1px 44px);
+}
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    0deg, rgba(0, 0, 0, 0.16) 0 1px, transparent 1px 3px);
+  opacity: 0.4;
+}
+
+/* ---------------------------------------------------------------------------
+   Brackets — the dashboard's corner ticks, for this page's framed boxes.
+   Same look as primitives.css `.brackets`, drawn with `::after` so it does
+   not collide with anything else.
+   --------------------------------------------------------------------------- */
+.hud-frame { position: relative; }
+.hud-frame::after {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  pointer-events: none;
+  --b: var(--bracket-color, var(--edge-hot));
+  --l: var(--bracket-len);
+  background:
+    linear-gradient(var(--b) 0 0) left   top    / var(--l) var(--stroke),
+    linear-gradient(var(--b) 0 0) left   top    / var(--stroke) var(--l),
+    linear-gradient(var(--b) 0 0) right  top    / var(--l) var(--stroke),
+    linear-gradient(var(--b) 0 0) right  top    / var(--stroke) var(--l),
+    linear-gradient(var(--b) 0 0) left   bottom / var(--l) var(--stroke),
+    linear-gradient(var(--b) 0 0) left   bottom / var(--stroke) var(--l),
+    linear-gradient(var(--b) 0 0) right  bottom / var(--l) var(--stroke),
+    linear-gradient(var(--b) 0 0) right  bottom / var(--stroke) var(--l);
+  background-repeat: no-repeat;
+}
+
+/* ---------------------------------------------------------------------------
+   Status line and wordmark
+   --------------------------------------------------------------------------- */
 #status-text {
   position: fixed;
   bottom: 40px;
   left: 50%;
   transform: translateX(-50%);
-  color: rgba(14, 165, 233, 0.5);
-  font-size: 13px;
-  letter-spacing: 2px;
+  max-width: calc(100vw - 32px);
+  color: var(--state-tone);
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  letter-spacing: var(--ls-label);
   text-transform: lowercase;
-  font-weight: 300;
-  transition: opacity 0.5s ease;
+  text-align: center;
+  text-shadow: 0 0 10px var(--state-tone);
+  opacity: 0.75;
+  transition: color var(--dur-slow) var(--ease), opacity var(--dur-slow) var(--ease);
   pointer-events: none;
   z-index: 10;
+}
+body[data-state="thinking"] #status-text {
+  animation: status-breathe 1.8s ease-in-out infinite;
+}
+@keyframes status-breathe {
+  0%, 100% { opacity: 0.45; }
+  50%      { opacity: 0.95; }
 }
 
 #jarvis-label {
@@ -40,79 +126,142 @@ html, body {
   bottom: 16px;
   left: 50%;
   transform: translateX(-50%);
-  color: rgba(14, 165, 233, 0.2);
-  font-size: 10px;
-  letter-spacing: 4px;
+  color: var(--text-faint);
+  opacity: 0.6;
+  font-size: var(--fs-label);
+  letter-spacing: var(--ls-title);
   text-transform: uppercase;
-  font-weight: 300;
   pointer-events: none;
   z-index: 10;
 }
 
+/* ---------------------------------------------------------------------------
+   Captions — what was heard and what JARVIS said, under the orb. Filled by
+   captions.ts with textContent only.
+   --------------------------------------------------------------------------- */
+#captions {
+  position: fixed;
+  left: 50%;
+  bottom: calc(7vh + 64px);
+  transform: translateX(-50%);
+  width: min(640px, calc(100vw - 32px));
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  text-align: center;
+  pointer-events: none;
+  z-index: 10;
+  transition: opacity var(--dur-slow) var(--ease);
+}
+#captions.is-faded { opacity: 0; }
+
+.caption {
+  line-height: var(--lh-body);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+}
+.caption:empty { display: none; }
+
+.caption--you {
+  color: var(--text-dim);
+  font-size: var(--fs-base);
+  letter-spacing: var(--ls-wide);
+  text-shadow: 0 0 6px var(--ground), 0 0 12px var(--ground);
+  -webkit-line-clamp: 2;
+}
+.caption--you::before {
+  content: "YOU  ";
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  letter-spacing: var(--ls-label);
+  color: var(--text-faint);
+}
+.caption--you.is-interim { font-style: italic; color: var(--text-faint); }
+
+.caption--jarvis {
+  color: var(--text);
+  font-size: var(--fs-lg);
+  /* A ground-coloured halo first, so the words stay legible over particles. */
+  text-shadow: 0 0 6px var(--ground), 0 0 14px var(--ground), var(--glow-text);
+  -webkit-line-clamp: 3;
+}
+
+/* ---------------------------------------------------------------------------
+   Controls
+   --------------------------------------------------------------------------- */
 #controls {
   position: fixed;
   top: 16px;
   right: 16px;
   display: flex;
-  gap: 8px;
+  gap: var(--sp-2);
   z-index: 20;
 }
 
 #controls button {
   width: 36px;
   height: 36px;
-  border: 1px solid rgba(14, 165, 233, 0.15);
-  border-radius: 8px;
-  background: rgba(14, 165, 233, 0.05);
-  color: rgba(14, 165, 233, 0.4);
+  border: var(--stroke) solid var(--edge);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text-dim);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.2s;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease),
+              border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
 }
 
 #controls button:hover {
-  background: rgba(14, 165, 233, 0.12);
-  color: rgba(14, 165, 233, 0.7);
-  border-color: rgba(14, 165, 233, 0.3);
+  background: var(--surface-raised);
+  color: var(--accent-bright);
+  border-color: var(--edge-strong);
+  box-shadow: 0 0 14px -4px var(--accent);
 }
+#controls button:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
 
 #controls button.muted {
-  color: rgba(239, 68, 68, 0.6);
-  border-color: rgba(239, 68, 68, 0.2);
+  --bracket-color: var(--signal-bad);
+  color: var(--signal-bad);
+  border-color: rgba(255, 90, 110, 0.3);
 }
 
 #menu-dropdown {
   position: fixed;
-  top: 58px;
+  top: 60px;
   right: 16px;
-  background: rgba(10, 10, 15, 0.95);
-  border: 1px solid rgba(14, 165, 233, 0.15);
-  border-radius: 8px;
-  padding: 4px;
+  min-width: 170px;
+  background: var(--scrim);
+  border: var(--stroke) solid var(--edge);
+  border-radius: var(--radius);
+  padding: var(--sp-1);
   z-index: 20;
   backdrop-filter: blur(12px);
+  box-shadow: var(--glow-panel);
 }
 
 #menu-dropdown button {
   display: block;
   width: 100%;
-  padding: 8px 16px;
+  padding: var(--sp-2) var(--sp-4);
   border: none;
   background: none;
-  color: rgba(14, 165, 233, 0.5);
-  font-size: 12px;
-  letter-spacing: 1px;
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: var(--fs-sm);
+  letter-spacing: var(--ls-wide);
+  text-transform: uppercase;
   text-align: left;
   cursor: pointer;
-  border-radius: 4px;
-  transition: all 0.15s;
+  border-radius: var(--radius);
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
 }
 
 #menu-dropdown button:hover {
-  background: rgba(14, 165, 233, 0.1);
-  color: rgba(14, 165, 233, 0.8);
+  background: var(--tone-soft);
+  color: var(--accent-bright);
 }
 
 #error-text {
@@ -120,11 +269,12 @@ html, body {
   top: 40px;
   left: 50%;
   transform: translateX(-50%);
-  color: rgba(239, 68, 68, 0.7);
-  font-size: 13px;
-  letter-spacing: 1px;
-  font-weight: 300;
-  transition: opacity 0.5s ease;
+  max-width: calc(100vw - 32px);
+  color: var(--signal-bad);
+  font-size: var(--fs-body);
+  letter-spacing: var(--ls-wide);
+  text-align: center;
+  transition: opacity var(--dur-slow) var(--ease);
   pointer-events: none;
   z-index: 10;
   opacity: 0;
@@ -137,20 +287,14 @@ html, body {
 #settings-container {
   display: none;
   position: fixed;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  z-index: 100;
+  inset: 0;
+  z-index: 200;   /* above the scan lines */
 }
 
 .settings-backdrop {
   position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  background: rgba(0, 0, 0, 0.5);
+  inset: 0;
+  background: var(--scrim-soft);
   opacity: 0;
   transition: opacity 0.3s ease;
 }
@@ -166,12 +310,13 @@ html, body {
   width: 420px;
   max-width: 100%;
   height: 100%;
-  background: rgba(8, 10, 18, 0.92);
-  border-left: 1px solid rgba(0, 212, 255, 0.12);
+  background: var(--scrim);
+  border-left: var(--stroke) solid var(--edge);
+  box-shadow: var(--glow-panel);
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
   transform: translateX(100%);
-  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: transform 0.3s var(--ease);
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -186,47 +331,48 @@ html, body {
   justify-content: space-between;
   align-items: center;
   padding: 20px 24px;
-  border-bottom: 1px solid rgba(0, 212, 255, 0.08);
+  border-bottom: var(--stroke) solid var(--edge);
 }
 
 .settings-header h2 {
   margin: 0;
-  font-size: 16px;
+  font-size: var(--fs-lg);
   font-weight: 400;
-  letter-spacing: 2px;
+  letter-spacing: var(--ls-title);
   text-transform: uppercase;
-  color: rgba(0, 212, 255, 0.7);
+  color: var(--accent-bright);
+  text-shadow: var(--glow-text);
 }
 
 .settings-close {
   width: 32px;
   height: 32px;
-  border: 1px solid rgba(0, 212, 255, 0.15);
-  border-radius: 6px;
-  background: rgba(0, 212, 255, 0.05);
-  color: rgba(0, 212, 255, 0.5);
+  border: var(--stroke) solid var(--edge);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text-dim);
   font-size: 18px;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.2s;
+  transition: all var(--dur) var(--ease);
 }
 
 .settings-close:hover {
-  background: rgba(0, 212, 255, 0.12);
-  color: rgba(0, 212, 255, 0.8);
-  border-color: rgba(0, 212, 255, 0.3);
+  background: var(--surface-raised);
+  color: var(--accent-bright);
+  border-color: var(--edge-strong);
 }
 
 .settings-welcome {
   padding: 16px 24px;
-  border-bottom: 1px solid rgba(0, 212, 255, 0.08);
+  border-bottom: var(--stroke) solid var(--edge);
 }
 
 .settings-welcome p {
   margin: 0;
-  color: rgba(0, 212, 255, 0.6);
+  color: var(--text-dim);
   font-size: 14px;
   letter-spacing: 0.5px;
 }
@@ -238,16 +384,16 @@ html, body {
 
 .settings-section {
   padding: 16px 24px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  border-bottom: var(--stroke) solid rgba(232, 170, 145, 0.06);
 }
 
 .settings-section h3 {
   margin: 0 0 14px 0;
-  font-size: 11px;
+  font-size: var(--fs-sm);
   font-weight: 500;
-  letter-spacing: 2px;
+  letter-spacing: var(--ls-label);
   text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.3);
+  color: var(--text-faint);
 }
 
 .settings-field {
@@ -257,8 +403,8 @@ html, body {
 .settings-field label {
   display: block;
   margin-bottom: 6px;
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.45);
+  font-size: var(--fs-base);
+  color: var(--text-dim);
   letter-spacing: 0.5px;
 }
 
@@ -274,20 +420,20 @@ html, body {
 .settings-field textarea {
   width: 100%;
   padding: 8px 12px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 6px;
-  color: rgba(255, 255, 255, 0.8);
-  font-size: 13px;
+  background: var(--surface-sunk);
+  border: var(--stroke) solid var(--edge);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: var(--fs-body);
   font-family: inherit;
   outline: none;
-  transition: border-color 0.2s;
+  transition: border-color var(--dur) var(--ease);
 }
 
 .settings-field input:focus,
 .settings-field select:focus,
 .settings-field textarea:focus {
-  border-color: rgba(0, 212, 255, 0.3);
+  border-color: var(--edge-hot);
 }
 
 .settings-field select {
@@ -306,46 +452,47 @@ html, body {
 
 .settings-hint {
   margin: 6px 0 0 0;
-  font-size: 11px;
+  font-size: var(--fs-sm);
   line-height: 1.4;
-  color: rgba(255, 255, 255, 0.3);
+  color: var(--text-faint);
 }
 
 .settings-restart-notice {
   margin: 8px 0 0 0;
-  font-size: 12px;
+  font-size: var(--fs-base);
   text-align: right;
-  color: rgba(0, 212, 255, 0.7);
+  color: var(--signal-warn);
 }
 
 .settings-btn {
   padding: 7px 14px;
-  border: 1px solid rgba(0, 212, 255, 0.2);
-  border-radius: 6px;
-  background: rgba(0, 212, 255, 0.06);
-  color: rgba(0, 212, 255, 0.6);
-  font-size: 12px;
-  letter-spacing: 0.5px;
+  border: var(--stroke) solid var(--edge-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text-dim);
+  font-size: var(--fs-base);
+  letter-spacing: var(--ls-wide);
   cursor: pointer;
   white-space: nowrap;
-  transition: all 0.2s;
+  transition: all var(--dur) var(--ease);
 }
 
 .settings-btn:hover {
-  background: rgba(0, 212, 255, 0.12);
-  color: rgba(0, 212, 255, 0.9);
-  border-color: rgba(0, 212, 255, 0.35);
+  background: var(--tone-soft);
+  color: var(--accent-bright);
+  border-color: var(--edge-hot);
 }
 
 .settings-btn.primary {
-  background: rgba(0, 212, 255, 0.12);
-  border-color: rgba(0, 212, 255, 0.3);
-  color: rgba(0, 212, 255, 0.8);
+  background: var(--tone-soft);
+  border-color: var(--edge-hot);
+  color: var(--accent-bright);
 }
 
 .settings-btn.primary:hover {
-  background: rgba(0, 212, 255, 0.2);
-  color: #00d4ff;
+  background: rgba(217, 119, 87, 0.24);
+  color: #fff;
+  box-shadow: 0 0 14px -4px var(--accent);
 }
 
 .settings-actions {
@@ -360,23 +507,23 @@ html, body {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--text-faint);
   flex-shrink: 0;
 }
 
 .status-dot.status-green {
-  background: #22c55e;
-  box-shadow: 0 0 6px rgba(34, 197, 94, 0.4);
+  background: var(--signal-ok);
+  box-shadow: 0 0 6px var(--signal-ok);
 }
 
 .status-dot.status-red {
-  background: #ef4444;
-  box-shadow: 0 0 6px rgba(239, 68, 68, 0.4);
+  background: var(--signal-bad);
+  box-shadow: 0 0 6px var(--signal-bad);
 }
 
 .status-dot.status-yellow {
-  background: #eab308;
-  box-shadow: 0 0 6px rgba(234, 179, 8, 0.4);
+  background: var(--signal-warn);
+  box-shadow: 0 0 6px var(--signal-warn);
   animation: pulse-dot 1s ease-in-out infinite;
 }
 
@@ -395,14 +542,14 @@ html, body {
   display: flex;
   align-items: center;
   gap: 10px;
-  font-size: 13px;
-  color: rgba(255, 255, 255, 0.5);
+  font-size: var(--fs-body);
+  color: var(--text-dim);
 }
 
 .status-detail {
   margin-left: auto;
-  font-size: 11px;
-  color: rgba(255, 255, 255, 0.25);
+  font-size: var(--fs-sm);
+  color: var(--text-faint);
 }
 
 .sysinfo-grid {
@@ -414,15 +561,16 @@ html, body {
 .sysinfo-row {
   display: flex;
   justify-content: space-between;
-  font-size: 13px;
+  font-size: var(--fs-body);
 }
 
 .sysinfo-label {
-  color: rgba(255, 255, 255, 0.35);
+  color: var(--text-faint);
 }
 
 .sysinfo-row span:last-child {
-  color: rgba(0, 212, 255, 0.6);
+  color: var(--accent-bright);
+  font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
 }
 
@@ -441,8 +589,8 @@ html, body {
   bottom: 18px;
   width: 90px;
   height: 3px;
-  border-radius: 2px;
-  background: rgba(255, 255, 255, 0.10);
+  border-radius: var(--radius);
+  background: var(--edge);
   overflow: hidden;
   pointer-events: none;
   z-index: 50;
@@ -452,11 +600,11 @@ html, body {
   display: block;
   height: 100%;
   width: var(--level, 0%);
-  background: #4fd1ff;
+  background: var(--accent);
   opacity: 0.55;
   transition: width 0.08s linear;
 }
-#mic-level.is-hot::after { opacity: 1; }
+#mic-level.is-hot::after { opacity: 1; background: var(--accent-bright); }
 
 /* Stop — shown only while he is speaking, because that is the only moment it
    means anything. Escape does the same thing without reaching for the mouse. */
@@ -467,17 +615,23 @@ html, body {
   transform: translateX(-50%);
   padding: 9px 22px;
   font: inherit;
-  font-size: 13px;
-  letter-spacing: 0.16em;
+  font-family: var(--font-mono);
+  font-size: var(--fs-base);
+  letter-spacing: var(--ls-label);
   text-transform: uppercase;
-  color: #9fd8ef;
-  background: rgba(10, 22, 32, 0.72);
-  border: 1px solid rgba(79, 209, 255, 0.35);
-  border-radius: 999px;
+  color: var(--text-dim);
+  background: var(--scrim-soft);
+  border: var(--stroke) solid var(--edge-strong);
+  border-radius: var(--radius);
   cursor: pointer;
   z-index: 40;
   backdrop-filter: blur(4px);
-  transition: border-color 0.15s ease, color 0.15s ease;
+  transition: border-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease),
+              box-shadow var(--dur-fast) var(--ease);
 }
-#hush:hover { color: #eaf8ff; border-color: rgba(79, 209, 255, 0.75); }
+#hush:hover {
+  color: var(--accent-bright);
+  border-color: var(--edge-hot);
+  box-shadow: 0 0 14px -4px var(--accent);
+}
 #hush[hidden] { display: none; }

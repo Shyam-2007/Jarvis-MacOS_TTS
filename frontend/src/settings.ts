@@ -18,6 +18,17 @@ interface StatusResponse {
     fish_voice_id: boolean;
     user_name: string;
   };
+  voice: {
+    engine: string; // what is speaking now (read at server boot)
+    macos_voice: string;
+    configured_engine: string; // what .env says — takes effect on restart
+    configured_macos_voice: string;
+  };
+}
+
+interface VoiceInfo {
+  name: string;
+  lang: string;
 }
 
 interface PreferencesResponse {
@@ -32,7 +43,8 @@ interface PreferencesResponse {
 let panelEl: HTMLElement | null = null;
 let isOpen = false;
 let isFirstTimeSetup = false;
-let setupStep = 0; // 0=fish, 1=name, 2=done
+let setupStep = 0; // 0=voice, 1=name, 2=done
+let voicesLoaded = false;
 
 // ---------------------------------------------------------------------------
 // API helpers
@@ -71,9 +83,38 @@ function buildPanelHTML(): string {
 
       <div class="settings-body">
 
-        <!-- API Keys -->
+        <!-- Voice -->
+        <section class="settings-section" id="section-voice">
+          <h3>Voice</h3>
+
+          <div class="settings-field">
+            <label>Engine</label>
+            <select id="input-tts-engine">
+              <option value="macos">macOS built-in voice (no key needed)</option>
+              <option value="fish">Fish Audio (API key)</option>
+            </select>
+          </div>
+
+          <div class="settings-field" id="field-macos-voice">
+            <label>macOS Voice</label>
+            <select id="input-macos-voice">
+              <option value="">System default</option>
+            </select>
+            <p class="settings-hint">More voices: System Settings &rarr; Accessibility &rarr; Spoken Content &rarr; System Voice &rarr; Manage Voices.</p>
+          </div>
+
+          <div class="settings-actions">
+            <button class="settings-btn primary" id="btn-save-voice">Save Voice</button>
+          </div>
+          <p class="settings-hint" id="voice-live"></p>
+          <p class="settings-restart-notice" id="voice-restart-notice" style="display:none">
+            Saved. Restart the server (menu &rarr; Restart Server) for this to take effect.
+          </p>
+        </section>
+
+        <!-- API Keys (Fish Audio only) -->
         <section class="settings-section" id="section-api-keys">
-          <h3>API Keys</h3>
+          <h3>Fish Audio</h3>
 
           <div class="settings-field">
             <label>Fish Audio API Key</label>
@@ -170,6 +211,62 @@ function setDotStatus(id: string, status: "green" | "red" | "yellow" | "off") {
   if (status !== "off") dot.classList.add(`status-${status}`);
 }
 
+function selectedEngine(): string {
+  const el = document.getElementById("input-tts-engine") as HTMLSelectElement | null;
+  return el?.value || "macos";
+}
+
+/** The Fish fields only matter when Fish is the engine; the voice picker
+ *  only when the macOS voice is. */
+function applyEngineVisibility() {
+  const fish = selectedEngine() === "fish";
+  const keys = document.getElementById("section-api-keys");
+  if (keys) keys.style.display = fish ? "" : "none";
+  const picker = document.getElementById("field-macos-voice");
+  if (picker) picker.style.display = fish ? "none" : "";
+}
+
+function voiceLabel(engine: string, voice: string): string {
+  if (engine === "fish") return "Fish Audio";
+  return `macOS — ${voice || "system default"}`;
+}
+
+/** Fill the voice dropdown from the voices installed on this Mac. Voice
+ *  names come from the system, so options are built with textContent,
+ *  never markup. English voices first, then the rest, each in `say`'s order. */
+async function loadVoices(selected: string) {
+  const sel = document.getElementById("input-macos-voice") as HTMLSelectElement | null;
+  if (!sel) return;
+  if (!voicesLoaded) {
+    try {
+      const { voices } = await apiGet<{ voices: VoiceInfo[] }>("/api/settings/voices");
+      const english = voices.filter((v) => v.lang.startsWith("en"));
+      const other = voices.filter((v) => !v.lang.startsWith("en"));
+      for (const v of [...english, ...other]) {
+        const opt = document.createElement("option");
+        opt.value = v.name;
+        opt.textContent = `${v.name} (${v.lang})`;
+        sel.appendChild(opt);
+      }
+      voicesLoaded = true;
+    } catch (e) {
+      console.error("[settings] failed to load voices:", e);
+    }
+  }
+  // A configured voice that is not installed is still shown, and named so.
+  if (selected && !Array.from(sel.options).some((o) => o.value === selected)) {
+    const opt = document.createElement("option");
+    opt.value = selected;
+    opt.textContent = `${selected} (not installed)`;
+    sel.appendChild(opt);
+  }
+  sel.value = selected;
+}
+
+function needsSetup(status: StatusResponse): boolean {
+  return status.voice.configured_engine === "fish" && !status.env_keys_set.fish_audio;
+}
+
 function formatUptime(seconds: number): string {
   if (seconds < 60) return `${Math.floor(seconds)}s`;
   if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
@@ -190,6 +287,15 @@ async function loadStatus() {
 
     // API key status dots
     setDotStatus("status-fish", status.env_keys_set.fish_audio ? "green" : "red");
+
+    // Voice: the dropdowns show what .env says; the line under them, what
+    // is speaking now. They differ between a save and a restart.
+    const engineEl = document.getElementById("input-tts-engine") as HTMLSelectElement | null;
+    if (engineEl) engineEl.value = status.voice.configured_engine;
+    await loadVoices(status.voice.configured_macos_voice);
+    applyEngineVisibility();
+    const live = document.getElementById("voice-live");
+    if (live) live.textContent = `Speaking now: ${voiceLabel(status.voice.engine, status.voice.macos_voice)}`;
 
     // System info
     const portEl = document.getElementById("sysinfo-port");
@@ -233,6 +339,26 @@ function wireEvents() {
   // Close
   document.getElementById("settings-close")?.addEventListener("click", closeSettings);
   document.getElementById("settings-backdrop")?.addEventListener("click", closeSettings);
+
+  // Voice
+  document.getElementById("input-tts-engine")?.addEventListener("change", applyEngineVisibility);
+  document.getElementById("btn-save-voice")?.addEventListener("click", async () => {
+    const engine = selectedEngine();
+    const voice = (document.getElementById("input-macos-voice") as HTMLSelectElement).value;
+    const notice = document.getElementById("voice-restart-notice");
+    const results = await Promise.all([
+      apiPost<{ success: boolean; error?: string }>("/api/settings/keys", { key_name: "JARVIS_TTS_ENGINE", key_value: engine }),
+      apiPost<{ success: boolean; error?: string }>("/api/settings/keys", { key_name: "JARVIS_VOICE", key_value: voice }),
+    ]);
+    const failed = results.find((r) => !r.success);
+    if (notice) {
+      notice.textContent = failed
+        ? `Not saved: ${failed.error ?? "unknown error"}`
+        : "Saved. Restart the server (menu \u2192 Restart Server) for this to take effect.";
+      notice.style.display = "block";
+    }
+    await loadStatus();
+  });
 
   // Save keys
   document.getElementById("btn-save-keys")?.addEventListener("click", async () => {
@@ -300,14 +426,17 @@ function enterSetupMode() {
 }
 
 function showSetupStep(step: number) {
-  const sections = ["section-api-keys", "section-preferences"];
-  sections.forEach((id, i) => {
+  // Step 0 is the voice: the engine picker, plus the Fish key fields when
+  // Fish is chosen. Step 1 is the user's name.
+  const steps: Record<string, number> = {
+    "section-voice": 0, "section-api-keys": 0,
+    "section-status": -1, "section-sysinfo": -1, "section-preferences": 1,
+  };
+  for (const [id, s] of Object.entries(steps)) {
     const el = document.getElementById(id);
-    if (!el) return;
-    if (step === 0 && i === 0) el.style.display = "";
-    else if (step === 1 && i === 1) el.style.display = "";
-    else el.style.display = "none";
-  });
+    if (el) el.style.display = s === step ? "" : "none";
+  }
+  if (step === 0) applyEngineVisibility();
 
   const nextBtn = document.getElementById("btn-setup-next");
   if (nextBtn) {
@@ -328,10 +457,11 @@ async function advanceSetup() {
     if (nav) nav.style.display = "none";
 
     // Show all sections
-    ["section-api-keys", "section-status", "section-preferences", "section-sysinfo"].forEach((id) => {
+    ["section-voice", "section-status", "section-preferences", "section-sysinfo"].forEach((id) => {
       const el = document.getElementById(id);
       if (el) el.style.display = "";
     });
+    applyEngineVisibility();
 
     closeSettings();
     return;
@@ -364,7 +494,7 @@ export async function openSettings() {
   await loadPreferences();
 
   // Check for first-time setup
-  if (status && !status.env_keys_set.fish_audio) {
+  if (status && needsSetup(status)) {
     enterSetupMode();
   }
 }
@@ -388,7 +518,7 @@ export function isSettingsOpen(): boolean {
 export async function checkFirstTimeSetup(): Promise<boolean> {
   try {
     const status = await apiGet<StatusResponse>("/api/settings/status");
-    if (!status.env_keys_set.fish_audio) {
+    if (needsSetup(status)) {
       openSettings();
       return true;
     }

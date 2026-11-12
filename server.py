@@ -98,6 +98,22 @@ log = logging.getLogger("jarvis")
 FISH_API_KEY = os.getenv("FISH_API_KEY", "")
 FISH_VOICE_ID = os.getenv("FISH_VOICE_ID", "612b878b113047d9a770c069c8b4fdfe")  # JARVIS (MCU)
 FISH_API_URL = "https://api.fish.audio/v1/tts"
+# Which voice JARVIS speaks with: the Mac's own (`say`, the default — no key,
+# no network) or Fish Audio. Read once at boot, like every setting here.
+TTS_ENGINE = tts.engine_from_env()
+MACOS_VOICE = os.getenv("JARVIS_VOICE", "").strip()      # a name from `say -v ?`; empty = system voice
+
+
+def _voice_rate(raw: str) -> int:
+    """JARVIS_VOICE_RATE as words per minute; 0 (the voice's own) if unset or junk."""
+    try:
+        return max(0, int((raw or "").strip() or 0))
+    except ValueError:
+        log.warning(f"JARVIS_VOICE_RATE={raw!r} is not a whole number; using the voice's own rate")
+        return 0
+
+
+MACOS_VOICE_RATE = _voice_rate(os.getenv("JARVIS_VOICE_RATE", ""))
 USER_NAME = os.getenv("USER_NAME", "sir")
 _SKIP_PERMISSIONS = os.getenv("JARVIS_SKIP_PERMISSIONS", "true").lower() not in ("0", "false", "no")
 
@@ -457,39 +473,13 @@ _last_greeting_time: float = 0
 
 
 # ---------------------------------------------------------------------------
-# TTS (Fish Audio)
+# TTS
 # ---------------------------------------------------------------------------
 
 async def synthesize_speech(text: str) -> Optional[bytes]:
-    """Generate speech audio from text using Fish Audio TTS."""
-    if not FISH_API_KEY:
-        log.warning("FISH_API_KEY not set, skipping TTS")
-        return None
-
-    try:
-        async with httpx.AsyncClient(timeout=15.0) as http:
-            response = await http.post(
-                FISH_API_URL,
-                headers={
-                    "Authorization": f"Bearer {FISH_API_KEY}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "text": text,
-                    "reference_id": FISH_VOICE_ID,
-                    "format": "mp3",
-                },
-            )
-            if response.status_code == 200:
-                _session_tokens["tts_calls"] += 1
-                _append_usage_entry(0, 0, "tts")
-                return response.content
-            else:
-                log.error(f"TTS error: {response.status_code}")
-                return None
-    except Exception as e:
-        log.error(f"TTS error: {e}")
-        return None
+    """One clip in whichever voice is live (`/api/tts-test`). The same path
+    the speech scheduler uses, so the test clip is the voice you will hear."""
+    return await _synth_for_speech(text)
 
 
 # ---------------------------------------------------------------------------
@@ -611,12 +601,15 @@ async def _voice_emit(msg: dict) -> None:
 
 
 async def _synth_for_speech(text: str) -> Optional[bytes]:
-    r = await tts.synthesize_chunk(text, api_key=FISH_API_KEY, voice_id=FISH_VOICE_ID, client=_tts_client)
+    if TTS_ENGINE == tts.ENGINE_FISH:
+        r = await tts.synthesize_chunk(text, api_key=FISH_API_KEY, voice_id=FISH_VOICE_ID, client=_tts_client)
+    else:
+        r = await tts.synthesize_macos(text, voice=MACOS_VOICE, rate=MACOS_VOICE_RATE)
     if r is None:
         return None
     _session_tokens["tts_calls"] += 1
     _append_usage_entry(0, 0, "tts")
-    log.debug(f"tts: {len(text)} chars, first byte {r.first_byte_sec:.2f}s, total {r.total_sec:.2f}s")
+    log.debug(f"tts ({TTS_ENGINE}): {len(text)} chars, first byte {r.first_byte_sec:.2f}s, total {r.total_sec:.2f}s")
     return r.audio
 
 
@@ -6702,6 +6695,7 @@ async def voice_handler(ws: WebSocket):
 # a restart.
 SETTABLE_ENV_KEYS = frozenset({
     "FISH_API_KEY", "FISH_VOICE_ID", "USER_NAME", "HONORIFIC",
+    "JARVIS_TTS_ENGINE", "JARVIS_VOICE", "JARVIS_VOICE_RATE",
 })
 
 # A value may not carry anything that ends the line it is written on.
@@ -6761,6 +6755,12 @@ def _env_value_problem(key: str, value: str) -> str | None:
         return "A setting cannot contain a control character"
     if _parse_env_lines(f"{key}={value}") != [(key, value)]:
         return "A setting cannot begin or end with a space or a quote"
+    # Settings with a closed set of meanings say so here rather than being
+    # saved as "fine" and silently read as the default at the next boot.
+    if key == "JARVIS_TTS_ENGINE" and value not in ("",) + tts.ENGINES:
+        return f"The voice engine must be one of: {', '.join(tts.ENGINES)}"
+    if key == "JARVIS_VOICE_RATE" and value and not (value.isdigit() and 0 < int(value) <= 1000):
+        return "The speaking rate must be a whole number of words per minute"
     return None
 
 
@@ -6856,7 +6856,7 @@ async def api_test_fish(body: KeyTest):
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.post(
-                "https://api.fish.audio/v1/tts",
+                FISH_API_URL,
                 headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
                 json={"text": "test", "reference_id": FISH_VOICE_ID},
             )
@@ -6883,7 +6883,22 @@ async def api_settings_status():
             "fish_voice_id": bool(env_dict.get("FISH_VOICE_ID", "").strip()),
             "user_name": env_dict.get("USER_NAME", ""),
         },
+        # What is speaking NOW (read at boot) and what .env says it will be
+        # after a restart — the two differ right after a save.
+        "voice": {
+            "engine": TTS_ENGINE,
+            "macos_voice": MACOS_VOICE,
+            "configured_engine": tts.engine_from_env(env_dict),
+            "configured_macos_voice": env_dict.get("JARVIS_VOICE", "").strip(),
+        },
     }
+
+
+@app.get("/api/settings/voices")
+async def api_settings_voices():
+    """The macOS voices installed on this machine, for the settings picker.
+    A read with no side effects — `say -v ?` only lists."""
+    return {"voices": await tts.list_macos_voices()}
 
 @app.get("/api/settings/preferences")
 async def api_get_preferences():

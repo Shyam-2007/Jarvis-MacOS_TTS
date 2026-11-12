@@ -384,16 +384,74 @@ def test_the_startup_check_never_takes_a_picture(monkeypatch):
 # --- FISH_API_KEY -------------------------------------------------------------
 
 def test_fish_api_key_present(monkeypatch):
+    monkeypatch.setenv("JARVIS_TTS_ENGINE", "fish")
     monkeypatch.setenv("FISH_API_KEY", "sk-fish-abc123")
     check = preflight._check_fish_api_key_sync()
     assert check.status == STATUS_OK
 
 
 def test_fish_api_key_absent(monkeypatch):
+    monkeypatch.setenv("JARVIS_TTS_ENGINE", "fish")
     monkeypatch.delenv("FISH_API_KEY", raising=False)
     check = preflight._check_fish_api_key_sync()
     assert check.status == STATUS_FAIL
     assert check.remedy
+
+
+def test_no_fish_key_is_needed_with_the_macos_voice(monkeypatch):
+    monkeypatch.delenv("JARVIS_TTS_ENGINE", raising=False)
+    monkeypatch.delenv("FISH_API_KEY", raising=False)
+    assert preflight._check_fish_api_key_sync().status == STATUS_OK
+
+
+# --- macOS voice -----------------------------------------------------------------
+
+_SAY_V = ("Daniel              en_GB    # Hello! My name is Daniel.\n"
+          "Eddy (English (UK)) en_GB    # Hello! My name is Eddy.\n")
+
+
+@pytest.mark.asyncio
+async def test_an_installed_voice_passes(monkeypatch):
+    monkeypatch.delenv("JARVIS_TTS_ENGINE", raising=False)
+    monkeypatch.setenv("JARVIS_VOICE", "eddy (english (uk))")
+    monkeypatch.setattr(preflight.shutil, "which", lambda name: "/usr/bin/say")
+    monkeypatch.setattr(preflight, "_run_subprocess",
+                        _fake_run_subprocess({("say", "-v"): (0, _SAY_V, "")}))
+    assert (await preflight._check_macos_voice()).status == STATUS_OK
+
+
+@pytest.mark.asyncio
+async def test_a_voice_that_is_not_installed_fails_with_a_remedy(monkeypatch):
+    """`say -v Nonesuch` speaks in the system voice rather than failing, so
+    nothing else would ever say the name was wrong."""
+    monkeypatch.delenv("JARVIS_TTS_ENGINE", raising=False)
+    monkeypatch.setenv("JARVIS_VOICE", "Danial")
+    monkeypatch.setattr(preflight.shutil, "which", lambda name: "/usr/bin/say")
+    monkeypatch.setattr(preflight, "_run_subprocess",
+                        _fake_run_subprocess({("say", "-v"): (0, _SAY_V, "")}))
+    check = await preflight._check_macos_voice()
+    assert check.status == STATUS_FAIL and check.remedy and "Danial" in check.message
+    assert preflight._phrase_for(check) == "the voice I've been given isn't installed"
+
+
+@pytest.mark.asyncio
+async def test_no_voice_named_or_fish_engine_never_spawns_anything(monkeypatch):
+    monkeypatch.setattr(preflight.shutil, "which", lambda name: "/usr/bin/say")
+    monkeypatch.setattr(preflight, "_run_subprocess", _fake_run_subprocess({}))
+    monkeypatch.delenv("JARVIS_TTS_ENGINE", raising=False)
+    monkeypatch.delenv("JARVIS_VOICE", raising=False)
+    assert (await preflight._check_macos_voice()).status == STATUS_OK
+    monkeypatch.setenv("JARVIS_TTS_ENGINE", "fish")
+    monkeypatch.setenv("JARVIS_VOICE", "Danial")
+    assert (await preflight._check_macos_voice()).status == STATUS_OK
+
+
+@pytest.mark.asyncio
+async def test_no_say_at_all_fails(monkeypatch):
+    monkeypatch.delenv("JARVIS_TTS_ENGINE", raising=False)
+    monkeypatch.setattr(preflight.shutil, "which", lambda name: None)
+    check = await preflight._check_macos_voice()
+    assert check.status == STATUS_FAIL and "JARVIS_TTS_ENGINE=fish" in check.remedy
 
 
 # --- leftover ANTHROPIC_* ------------------------------------------------------
@@ -517,13 +575,14 @@ async def test_run_checks_runs_all_registered_checks(monkeypatch):
     monkeypatch.setattr(preflight.shutil, "which", lambda name: None)  # claude missing -> fast fail
     monkeypatch.setattr(preflight.sys, "platform", "linux")  # accessibility skipped -> fast warn
     monkeypatch.delenv("FISH_API_KEY", raising=False)
+    monkeypatch.delenv("JARVIS_TTS_ENGINE", raising=False)
     monkeypatch.setattr(preflight, "_settings_path", lambda: preflight.Path("/nonexistent/settings.json"))
 
     results = await preflight.run_checks(timeout=1.0)
     names = {c.name for c in results}
     assert names == {
         "claude_cli", "claude_login", "accessibility", "screen_recording",
-        "fish_api_key", "anthropic_key_leftover", "cross_session_inbound",
+        "fish_api_key", "macos_voice", "anthropic_key_leftover", "cross_session_inbound",
     }
 
 
